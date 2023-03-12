@@ -4,6 +4,28 @@ from time import sleep
 from subprocess import Popen
 import os
 
+from datetime import datetime
+
+# Figure out the platform and filepath
+import platform
+soundspath = "Sounds/"
+
+# Check if it's an RPI
+RPi =  platform.uname().node == "raspberrypi"
+
+if RPi:
+    import RPi.GPIO as GPIO
+    GPIO.setmode(GPIO.BCM)
+    from mpu6050 import mpu6050
+    from smbus import SMBus
+    from bmp280 import BMP280
+
+
+
+    print("Running on Raspberry Pi, GPIO enabled")
+else:
+    print("Running on a non-Pi OS")
+
 import cv2
 import numpy as np
 import imutils
@@ -13,32 +35,66 @@ import serial
 import serial.tools.list_ports
 
 import pygame
-
-RPi = False
-soundspath = "Sounds/"
-
-if RPi:
-    import RPi.GPIO as GPIO
-    GPIO.setmode(GPIO.BCM)
-    soundspath = "/home/pi/MinionBot9000/Sounds/"
-    
 # Pygame audio setup
 pygame.init()
 pygame.mixer.init()
 
 class MinionBot:
     def __init__(self):
+
+        self.lastmilksound = "Milk5times.mp3"
+        pygame.mixer.music.load(soundspath + "Milk5times.mp3")
         self.ser = self.setupSerial()
 
+        # Timer for milk frequency
+        self.timestamp = datetime.now()
         # Connect to camera
+        self.cameraConnected = False
+
         self.WIDTH = 200
-        self.cam=cv2.VideoCapture(0)
+        if self.cameraConnected: self.cam=cv2.VideoCapture(0)
+
         #banana_cascade = cv2.CascadeClassifier('BananaCascade.xml')
         self.banana_cascade = cv2.CascadeClassifier('banana_classifier.xml')
 
         self.MIN_BANANA_FRAMES = 5
         self.bananaFrameCount = 0
-        
+
+        # Connect to accelerometer and bmp280 - add a check if connect successful?
+        self.accelConnected = False
+        self.bmp280Connected = False
+
+        self.accel = None
+        self.bmp280 = None
+
+        # Connect to accelerometer
+        if RPi and self.accelConnected and  self.accelConnected: self.accel = mpu6050(0x68)
+
+        # Connect to pressure sensor 
+        if RPi and self.bmp280Connected:  (self.bmp280, self.baseline) = self.setupBmp280()
+            
+           
+
+    def setupBmp280(self):
+        bus = SMBus(1)
+        bmp280 = BMP280(i2c_dev=bus)
+
+        # Check if failed
+        if bmp280 is None:
+            return None
+
+        baseline_values = []
+        baseline_size = 100
+        print("Collecting baseline values for {:d} seconds. Do not move the sensor!\n".format(baseline_size/10))
+
+        for i in range(baseline_size):
+            pressure = bmp280.get_pressure()
+            baseline_values.append(pressure)
+            sleep(0.1)
+
+        baseline = sum(baseline_values[:-25]) / len(baseline_values[:-25])
+
+        return bmp280, baseline
 
     def setupSerial(self):
         # Serial setup - hacky fix for finding Arduino
@@ -61,17 +117,48 @@ class MinionBot:
             msg = msg.strip()
             msg = msg.decode('utf-8')
             try:
-                voltage = float(msg)
-                if voltage > 0:
-                    print(voltage)
-                    volume = voltage/5.0
-                    if not pygame.mixer.music.get_busy():
-                        pygame.mixer.music.load(soundspath + "MinionsScreaming.mp3")
-                        pygame.mixer.music.play()
+                distance = float(msg)
+                #print(distance)
+                
+                volume = 0.5
+                interval = 10 # 10 second default interval
+                milksound = "Milk.mp3"
+
+                if distance > 0:
+                    volume = 1.0
+                    # Around 3.3 seconds when at 100cm
+                    interval = distance/30
+                    print(interval)
+                    if interval < 3: milksound = "Milk5times.mp3"
+
+                if milksound is not self.lastmilksound and not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.load(soundspath + milksound)
+
+                # and
+
+                if (datetime.now()-self.timestamp).seconds >= interval:
+                    print("Milk!")
+                    pygame.mixer.music.play()
                     pygame.mixer.music.set_volume(volume)
+                    self.timestamp = datetime.now()
                     
+                    
+                self.lastmilksound = milksound
+
+
             except ValueError:
                 print('Not a float')
+
+    def readAccelerometer(self):
+        accelerometer_data = self.accel.get_accel_data()
+        #print(accelerometer_data)
+
+    def readAltitude(self):
+        try:
+            altitude = self.bmp280.get_altitude(qnh=self.baseline)
+            print('Relative altitude: {:05.2f} metres'.format(altitude))
+        except Exception:
+            print("IO error")
 
     def readCamera(self):
         ret, frame = self.cam.read()
@@ -102,10 +189,11 @@ class MinionBot:
 
     def run(self):
         while 1:
-            if self.ser: 
-                self.readSerial()
-            if self.cam: 
-                self.readCamera()
+            if self.ser is not None: self.readSerial()
+            if self.accelConnected: self.readAccelerometer()
+            if self.bmp280Connected: self.readAltitude()
+            if self.cameraConnected: self.readCamera()
+
             if cv2.waitKey(1) == 27:
                 cv2.destroyAllWindows()
                 break  # esc to quit
