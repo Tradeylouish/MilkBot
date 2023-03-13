@@ -1,37 +1,30 @@
 #!/usr/bin/env python
 
-from time import sleep
 import time
-
-from datetime import datetime
-
-# Figure out the platform and filepath
-import platform
-soundspath = "Sounds/"
-
-# Check if it's an RPI
-# RPi =  platform.uname().node == "raspberrypi"
 
 import serial
 import serial.tools.list_ports
 
 import pygame
-# Pygame audio setup
-pygame.init()
-pygame.mixer.init()
-
+import keyboard
 
 class MilkBot:
-    def __init__(self):
-
-        self.prevDistance = -1.0
-
-        self.sound = pygame.mixer.Sound("Sounds/Milk.mp3")
-
+    def __init__(self, soundfile):
+        # Serial / distance setup
         self.ser = self.setupSerial()
+        self.prevDistance = -1.0
+        self.simulatedValue = -1.0
 
-        # Timer for milk frequency
+        # Pygame audio setup
+        pygame.init()
+        self.sound = pygame.mixer.Sound(soundfile)
+        # Can also use FastMilk.mp3
+
+        # Timestamp for sound interval
         self.timestamp = time.time()
+
+        # Delay before spamming the console
+        time.sleep(2)
 
     def setupSerial(self):
         # Serial setup - hacky fix for finding Arduino
@@ -44,13 +37,25 @@ class MilkBot:
                 ser.flushInput()
                 return ser
             
-        print("Couldn't establish a serial connection, using dummy values")
+        print("Couldn't establish a serial connection, using simulation")
         return None
 
+    def simluateSerial(self):
+        # Limit to 0-300 cm
+        if keyboard.is_pressed("up arrow"):
+            self.simulatedValue = min(300.0, self.simulatedValue + 0.01)
+        if keyboard.is_pressed("down arrow"):
+            self.simulatedValue = max(0, self.simulatedValue - 0.01)
+        
+        # Simulate error value at high distance
+        if self.simulatedValue == 300.0:
+            return "-1.0"
+        return str(self.simulatedValue)
+
     def readSerial(self):
-        # Dummy value for no serial
+        # Dummy values for no serial
         if self.ser is None:
-            return -1.0
+            return self.simluateSerial()
 
         # Read number over serial
         if (self.ser.inWaiting()>0):
@@ -63,7 +68,6 @@ class MilkBot:
         return None
 
     def getDistance(self):
-
         msg = self.readSerial()
 
         # If there's no new serial message, just use the last distance value
@@ -79,26 +83,33 @@ class MilkBot:
         self.prevDistance = distance
         return distance
 
+    def calculateVolume(self, distance):
+        # Change from half to max volume when getting a valid distance
+        if distance < 0:
+            return 0.5
+        return 1.0
+
+    def calculateInterval(self, distance):
+        # 10 second default
+        if distance < 0:
+            return 10
+        
+        # Tune the interval
+        MIN_INTERVAL = 0.44
+        INTERVAL_GRADIENT = 30
+        return max(distance/INTERVAL_GRADIENT, MIN_INTERVAL)
+
     def milkSound(self):
-        
         distance = self.getDistance()
-        
-        volume = 0.5
-        interval = 10 # 10 second default interval
 
-        if distance > 0:
-            volume = 1.0
-            # Around 3.3 seconds when at 100cm
+        volume = self.calculateVolume(distance)
+        interval = self.calculateInterval(distance)
 
-            # Tune the minimum interval based on specific sound
-            interval = max(distance/30, 0.44)
+        print(distance)
         
-        #print(interval)
         timeElapsed = (time.time()-self.timestamp)
-        print(timeElapsed)
 
         if timeElapsed >= interval:
-            #print("Milk!")
             self.sound.set_volume(volume)
             self.sound.play()
             self.timestamp = time.time()
@@ -108,7 +119,7 @@ class MilkBot:
             self.milkSound()
 
 if __name__ == '__main__':
-    milk_bot = MilkBot()
+    milk_bot = MilkBot("Sounds/Milk.mp3")
     milk_bot.run()
 
 
