@@ -18,7 +18,8 @@ class MilkBot:
         # Pygame audio setup
         pygame.init()
         self.sound = pygame.mixer.Sound(soundfile)
-        # Can also use FastMilk.mp3
+        self.SOUND_LENGTH = self.sound.get_length()
+        print(f"{soundfile} is {self.SOUND_LENGTH} seconds long")
 
         # Timestamp for sound interval
         self.timestamp = time.time()
@@ -90,14 +91,27 @@ class MilkBot:
         return 1.0
 
     def calculateInterval(self, distance):
-        # 10 second default
+        # Tunable paramaters for the interval
+        MIN_INTERVAL_ADJUST = -0.15
+        FAST_PLAY_DISTANCE = 10.0
+
+        #Derived parameters
+        MIN_INTERVAL = self.SOUND_LENGTH + MIN_INTERVAL_ADJUST
+        MAX_INTERVAL = self.SOUND_LENGTH + 10  # Default 10 seconds between sounds
+
+        #Smooth increase to the maximum interval
+        INTERVAL_GRADIENT = (MAX_INTERVAL-MIN_INTERVAL)/(300.0-FAST_PLAY_DISTANCE)/4
+
+        # Default 10 seconds between sounds, if distance too far to get signal
         if distance < 0:
-            return 10
+            return self.SOUND_LENGTH + 10
         
-        # Tune the interval
-        MIN_INTERVAL = 0.44
-        INTERVAL_GRADIENT = 30
-        return max(distance/INTERVAL_GRADIENT, MIN_INTERVAL)
+        # The distance range where the sound always plays with minimum interval
+        if distance < FAST_PLAY_DISTANCE:
+            return self.SOUND_LENGTH + MIN_INTERVAL_ADJUST
+        
+        # Distance range where the interval changes linearly
+        return self.SOUND_LENGTH + MIN_INTERVAL_ADJUST + INTERVAL_GRADIENT*(distance-FAST_PLAY_DISTANCE)
 
     def milkSound(self):
         distance = self.getDistance()
